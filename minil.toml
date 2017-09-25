@@ -1,0 +1,4 @@
+name = "Crypt-OpenSSL-CMS"
+# badges = ["travis"]
+module_maker="ModuleBuildTiny"
+
