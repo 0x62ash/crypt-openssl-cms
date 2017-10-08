@@ -137,8 +137,8 @@ sub verify {
 
         $store = X509_STORE_new;
 
-        my $ca_file = $args{ca_file} // ref($self) ? $self->{ca_file} : undef;
-        my $ca_path = $args{ca_path} // ref($self) ? $self->{ca_path} : undef;
+        my $ca_file = $args{ca_file} // ( ref($self) ? $self->{ca_file} : undef );
+        my $ca_path = $args{ca_path} // ( ref($self) ? $self->{ca_path} : undef );
 
         if ($ca_file || $ca_path) {
             X509_STORE_load_locations($store, $ca_file, $ca_path);
@@ -190,7 +190,7 @@ sub sign {
         BIO_free($bio); $bio = undef;
 
         $bio = BIO_new_file($self->{key}, 'r');
-        $key = PEM_read_bio_PrivateKey($bio, undef, undef, $args{key_pass} // ref($self) ? $self->{key_pass} : undef);
+        $key = PEM_read_bio_PrivateKey($bio, undef, undef, $args{key_pass} // ( ref($self) ? $self->{key_pass} : undef ));
         BIO_free($bio); $bio = undef;
 
         if ($args{string}) {
@@ -329,7 +329,7 @@ sub dump {
         } elsif ($args{file}) {
             $bio = BIO_new_file($args{file}, 'r');
         } else {
-            die('string or file required for dump_as_string()');
+            die('string or file required for dump()');
         }
 
         $cms = PEM_read_bio_CMS($bio, undef, undef, undef);
