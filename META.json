@@ -1,5 +1,5 @@
 {
-   "abstract" : "Perl bindings to OpenSSL CMS API (former PKCS7)",
+   "abstract" : "L<FFI|FFI::Platypus> Perl bindings to OpenSSL L<Cryptographic Message Syntax (CMS)|https://tools.ietf.org/html/rfc5652> API (former PKCS7)",
    "author" : [
       "Alexander Batyrshin, C<0x62ash@gmail.com>."
    ],
@@ -55,6 +55,17 @@
       }
    },
    "release_status" : "unstable",
+   "resources" : {
+      "bugtracker" : {
+         "web" : "https://github.com/0x62ash/crypt-openssl-cms/issues"
+      },
+      "homepage" : "https://github.com/0x62ash/crypt-openssl-cms",
+      "repository" : {
+         "type" : "git",
+         "url" : "git://github.com/0x62ash/crypt-openssl-cms.git",
+         "web" : "https://github.com/0x62ash/crypt-openssl-cms"
+      }
+   },
    "version" : "0.01",
    "x_serialization_backend" : "JSON::PP version 2.27400"
 }

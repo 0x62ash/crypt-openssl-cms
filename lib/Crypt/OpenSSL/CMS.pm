@@ -30,9 +30,7 @@ BEGIN {
     my $wrapper = sub {
         my $func = shift;
         my $ret = $func->( @_ );
-        local $Carp::CarpLevel = 1;
-        croak(_last_error) unless $ret;
-        #die(_last_error) unless $ret;
+        _croak(_last_error) unless $ret;
         return $ret;
     };
 
@@ -45,15 +43,15 @@ BEGIN {
     $ffi->attach( OPENSSL_add_all_algorithms_noconf => [] => 'void' );
     $ffi->attach( ERR_load_crypto_strings           => [] => 'void' );
 
-    $ffi->attach( ERR_get_error => [] => 'uint64' );
+    $ffi->attach( ERR_get_error      => [] => 'uint64' );
     $ffi->attach( ERR_error_string_n => [ 'uint64', 'opaque', 'size_t' ] => 'void' );
 
-    $ffi->attach( BIO_s_mem => []         => 'opaque', $wrapper );
-    $ffi->attach( BIO_new   => ['opaque'] => 'BIO', $wrapper );
-    $ffi->attach( BIO_new_file    => [ 'string', 'string' ] => 'BIO', $wrapper );
-    $ffi->attach( BIO_new_mem_buf => [ 'string', 'int' ]    => 'BIO', $wrapper );
-    $ffi->attach( BIO_ctrl => [ 'BIO', 'int', 'int', 'opaque*' ] => 'long', $wrapper );
-    $ffi->attach( BIO_free => ['BIO'] => 'void' );
+    $ffi->attach( BIO_s_mem       => []                                 => 'opaque', $wrapper );
+    $ffi->attach( BIO_new         => ['opaque']                         => 'BIO', $wrapper );
+    $ffi->attach( BIO_new_file    => [ 'string', 'string' ]             => 'BIO', $wrapper );
+    $ffi->attach( BIO_new_mem_buf => [ 'string', 'int' ]                => 'BIO', $wrapper );
+    $ffi->attach( BIO_ctrl        => [ 'BIO', 'int', 'int', 'opaque*' ] => 'long', $wrapper );
+    $ffi->attach( BIO_free        => ['BIO']                            => 'void' );
 
     $ffi->attach( PEM_read_bio_CMS        => [ 'BIO', 'opaque', 'opaque', 'opaque' ] => 'CMS', $wrapper );
     $ffi->attach( PEM_read_bio_X509       => [ 'BIO', 'opaque', 'opaque', 'opaque' ] => 'X509', $wrapper );
@@ -63,8 +61,12 @@ BEGIN {
     $ffi->attach( EVP_PKEY_free    => ['PKEY'] => 'void' );
     $ffi->attach( EVP_des_ede3_cbc => []       => 'opaque' );
 
-    $ffi->attach( X509_STORE_new => []       => 'opaque', $wrapper );
-    $ffi->attach( X509_free      => ['X509'] => 'void' );
+    $ffi->attach( X509_free                    => ['X509'] => 'void' );
+    $ffi->attach( X509_STORE_new               => [] => 'opaque', $wrapper );
+    $ffi->attach( X509_STORE_add_cert          => [ 'opaque', 'X509' ] => 'opaque', $wrapper);
+    $ffi->attach( X509_STORE_load_locations    => [ 'opaque', 'string', 'string'] => 'int', $wrapper);
+    $ffi->attach( X509_STORE_set_default_paths => [ 'opaque' ] => 'int', $wrapper);
+    $ffi->attach( X509_STORE_free              => [ 'opaque' ] => 'void', $wrapper);
 
     $ffi->attach( sk_new_null => [] => 'X509_STACK', $wrapper );
     $ffi->attach( sk_push     => [ 'X509_STACK', 'X509' ]   => 'int', $wrapper );
@@ -111,34 +113,66 @@ use constant CMS_KEY_PARAM             => 0x40000;
 
 sub new {
     my ($class, %args) = @_;
-    return bless { map { $_ => $args{$_} } qw[cert key key_pass] }, $class;
+    return bless { map { $_ => $args{$_} } qw[ca_file ca_path cert key key_pass] }, $class;
 }
 
 sub verify {
-    my ($self, $pem, $flags) = @_;
+    my ($self, %args) = @_;
 
-    my $data;
-
-    my ($bio_in, $bio_out, $cms);
+    my ($bio, $cert, $certs, $store, $cms, $data);
 
     try {
-        $bio_in = BIO_new_mem_buf($pem, -1);
+        if ($args{cert}) {
+            $bio = BIO_new_file($args{cert}, 'r');
 
-        $cms = PEM_read_bio_CMS($bio_in, undef, undef, undef);
+            $cert = PEM_read_bio_X509($bio, undef, undef, undef);
 
-        $bio_out = BIO_new(BIO_s_mem);
+            $certs = sk_new_null();
+            sk_push($certs, $cert);
+            $cert = undef;
 
-        CMS_verify($cms, undef, undef, undef, $bio_out, $flags);
+            BIO_free($bio);
+            $bio = undef;
+        }
+
+        $store = X509_STORE_new;
+
+        my $ca_file = $args{ca_file} // ref($self) ? $self->{ca_file} : undef;
+        my $ca_path = $args{ca_path} // ref($self) ? $self->{ca_path} : undef;
+
+        if ($ca_file || $ca_path) {
+            X509_STORE_load_locations($store, $ca_file, $ca_path);
+        } else {
+            X509_STORE_set_default_paths($store);
+        }
+
+        if ($args{string}) {
+            $bio = BIO_new_mem_buf($args{string}, -1);
+        } elsif ($args{file}) {
+            $bio = BIO_new_file($args{file}, 'r');
+        } else {
+            die('string or file required for verify()');
+        }
+
+        $cms = PEM_read_bio_CMS($bio, undef, undef, undef);
+        BIO_free($bio); $bio = undef;
+
+        $bio = BIO_new(BIO_s_mem);
+
+        CMS_verify($cms, $certs, $store, undef, $bio, $args{flags});
 
         my $buf;
-        my $len = BIO_ctrl($bio_out, BIO_CTRL_INFO(), 0, \$buf);
+        my $len = BIO_ctrl($bio, BIO_CTRL_INFO(), 0, \$buf);
 
         $data = buffer_to_scalar($buf, $len);
     } catch {
-        die("Verify failed: $_");
+        _croak("Verify failed: $_");
     } finally {
-        BIO_free($bio_in) if $bio_in;
-        BIO_free($bio_out) if $bio_out;
+        BIO_free($bio) if $bio;
+        X509_free($cert) if $cert;
+        sk_pop_free($certs, $ffi->find_symbol('X509_free')) if $certs;
+        # FIXME
+        #X509_STORE_free($store) if $store;
         CMS_ContentInfo_free($cms) if $cms;
     };
 
@@ -146,39 +180,42 @@ sub verify {
 }
 
 sub sign {
-    my ($self, $data, $flags) = @_;
+    my ($self, %args) = @_;
 
-    my $pem;
-
-    my($bio_cert, $cert, $bio_key, $key, $bio_in, $cms, $bio_out);
+    my($bio, $cert, $key, $cms, $pem);
 
     try {
-        my $bio_cert = BIO_new_file($self->{cert}, "r");
+        $bio = BIO_new_file($self->{cert}, 'r');
+        $cert = PEM_read_bio_X509($bio, undef, undef, undef);
+        BIO_free($bio); $bio = undef;
 
-        my $cert = PEM_read_bio_X509($bio_cert, undef, undef, undef);
+        $bio = BIO_new_file($self->{key}, 'r');
+        $key = PEM_read_bio_PrivateKey($bio, undef, undef, $args{key_pass} // ref($self) ? $self->{key_pass} : undef);
+        BIO_free($bio); $bio = undef;
 
-        my $bio_key = BIO_new_file($self->{key}, "r");
+        if ($args{string}) {
+            $bio = BIO_new_mem_buf($args{string}, -1);
+        } elsif ($args{file}) {
+            $bio = BIO_new_file($args{file}, 'r');
+        } else {
+            die('string or file required for sign()');
+        }
 
-        my $key = PEM_read_bio_PrivateKey($bio_key, undef, undef, $self->{key_pass});
+        $cms = CMS_sign($cert, $key, undef, $bio, $args{flags});
+        BIO_free($bio); $bio = undef;
 
-        my $bio_in = BIO_new_mem_buf($data, -1);
+        $bio = BIO_new(BIO_s_mem);
 
-        my $cms = CMS_sign($cert, $key, undef, $bio_in, $flags);
-
-        my $bio_out = BIO_new(BIO_s_mem);
-
-        PEM_write_bio_CMS($bio_out, $cms, undef, 0);
+        PEM_write_bio_CMS($bio, $cms, undef, 0);
 
         my $buf;
-        my $len = BIO_ctrl($bio_out, BIO_CTRL_INFO(), 0, \$buf);
+        my $len = BIO_ctrl($bio, BIO_CTRL_INFO(), 0, \$buf);
 
         $pem = buffer_to_scalar($buf, $len);
     } catch {
-        die("Sign failed: $_");
+        _croak("Sign failed: $_");
     } finally {
-        BIO_free($bio_cert) if $bio_cert;
-        BIO_free($bio_key) if $bio_key;
-        BIO_free($bio_in) if $bio_in;
+        BIO_free($bio) if $bio;
         X509_free($cert) if $cert;
         EVP_PKEY_free($key) if $key;
         CMS_ContentInfo_free($cms) if $cms;
@@ -188,84 +225,90 @@ sub sign {
 }
 
 sub encrypt {
-    my ($self, $data, $recipient, $flags) = @_;
+    my ($self, %args) = @_;
 
     my $pem;
 
-    my ($bio_cert, $cert, $recips, $cms, $bio_in, $bio_out);
+    my ($bio, $cert, $certs, $cms);
 
     try {
-        my $bio_cert = BIO_new_file($self->{cert}, "r");
+        $bio = BIO_new_file($args{recipient}, "r");
+        $cert = PEM_read_bio_X509($bio, undef, undef, undef);
+        BIO_free($bio); $bio = undef;
 
-        my $cert = PEM_read_bio_X509($bio_cert, undef, undef, undef);
-
-        my $recips = sk_new_null();
-
-        sk_push($recips, $cert);
-
+        my $certs = sk_new_null();
+        sk_push($certs, $cert);
         $cert = undef;
 
-        my $bio_in = BIO_new_mem_buf($data, -1);
+        if ($args{string}) {
+            $bio = BIO_new_mem_buf($args{string}, -1);
+        } elsif ($args{file}) {
+            $bio = BIO_new_file($args{file}, 'r');
+        } else {
+            die('string or file required for encrypt()');
+        }
 
-        my $cms = CMS_encrypt($recips, $bio_in, EVP_des_ede3_cbc(), $flags);
+        $cms = CMS_encrypt($certs, $bio, EVP_des_ede3_cbc(), $args{flags});
+        BIO_free($bio); $bio = undef;
 
-        my $bio_out = BIO_new(BIO_s_mem);
+        $bio = BIO_new(BIO_s_mem);
 
-        PEM_write_bio_CMS($bio_out, $cms, undef, 0);
+        PEM_write_bio_CMS($bio, $cms, undef, 0);
 
         my $buf;
-        my $len = BIO_ctrl($bio_out, BIO_CTRL_INFO(), 0, \$buf);
+        my $len = BIO_ctrl($bio, BIO_CTRL_INFO(), 0, \$buf);
 
         $pem = buffer_to_scalar($buf, $len);
     } catch {
-        die("Encrypt failed: $_");
+        _croak("Encrypt failed: $_");
     } finally {
-        BIO_free($bio_cert) if $bio_in;
+        BIO_free($bio) if $bio;
         X509_free($cert) if $cert;
-        sk_pop_free($recips, $ffi->find_symbol('X509_free')) if $recips;
+        sk_pop_free($certs, $ffi->find_symbol('X509_free')) if $certs;
         CMS_ContentInfo_free($cms) if $cms;
-        BIO_free($bio_in) if $bio_in;
-        BIO_free($bio_out) if $bio_out;
     };
 
     return $pem;
 }
 
 sub decrypt {
-    my ($self, $pem, $flags) = @_;
+    my ($self, %args) = @_;
 
-    my $data;
-
-    my ($bio_cert, $cert, $bio_key, $key, $bio_in, $bio_out, $cms);
+    my ($bio, $cert,$key, $cms, $data);
 
     try {
-        my $bio_cert = BIO_new_file($self->{cert}, "r");
+        $bio = BIO_new_file($self->{cert}, "r");
+        $cert = PEM_read_bio_X509($bio, undef, undef, undef);
+        BIO_free($bio); $bio = undef;
 
-        my $cert = PEM_read_bio_X509($bio_cert, undef, undef, undef);
+        $bio = BIO_new_file($self->{key}, "r");
+        $key = PEM_read_bio_PrivateKey($bio, undef, undef, $self->{key_pass});
+        BIO_free($bio); $bio = undef;
 
-        my $bio_key = BIO_new_file($self->{key}, "r");
+        if ($args{string}) {
+            $bio = BIO_new_mem_buf($args{string}, -1);
+        } elsif ($args{file}) {
+            $bio = BIO_new_file($args{file}, 'r');
+        } else {
+            die('string or file required for decrypt()');
+        }
 
-        my $key = PEM_read_bio_PrivateKey($bio_key, undef, undef, $self->{key_pass});
+        $cms = PEM_read_bio_CMS($bio, undef, undef, undef);
+        BIO_free($bio); $bio = undef;
 
-        my $bio_in = BIO_new_mem_buf($pem, -1);
 
-        my $cms = PEM_read_bio_CMS($bio_in, undef, undef, undef);
+        $bio = BIO_new(BIO_s_mem);
 
-        my $bio_out = BIO_new(BIO_s_mem);
-
-        CMS_decrypt($cms, $key, $cert, undef, $bio_out, $flags);
+        CMS_decrypt($cms, $key, $cert, undef, $bio, $args{flags});
 
         my $buf;
-        my $len = BIO_ctrl($bio_out, BIO_CTRL_INFO(), 0, \$buf);
+        my $len = BIO_ctrl($bio, BIO_CTRL_INFO(), 0, \$buf);
 
         $data = buffer_to_scalar($buf, $len);
     } catch {
-        die("Decrypt failed: $_");
+        _croak("Decrypt failed: $_");
     } finally {
-        BIO_free($bio_in) if $bio_in;
-        BIO_free($bio_out) if $bio_out;
-        BIO_free($bio_cert) if $bio_cert;
-        BIO_free($bio_key) if $bio_key;
+        BIO_free($bio) if $bio;
         X509_free($cert) if $cert;
         EVP_PKEY_free($key) if $key;
         CMS_ContentInfo_free($cms) if $cms;
@@ -274,28 +317,36 @@ sub decrypt {
     return $data;
 }
 
-sub dump_as_string {
-    my ($self, $pem) = @_;
+sub dump {
+    my ($self, %args) = @_;
 
     my $string;
-    my ($bio_in, $cms, $bio_out);
+    my ($bio, $cms);
 
     try {
-        $bio_in = BIO_new_mem_buf($pem, -1);
-        $cms = PEM_read_bio_CMS($bio_in, undef, undef, undef);
-        $bio_out = BIO_new(BIO_s_mem);
+        if ($args{string}) {
+            $bio = BIO_new_mem_buf($args{string}, -1);
+        } elsif ($args{file}) {
+            $bio = BIO_new_file($args{file}, 'r');
+        } else {
+            die('string or file required for dump_as_string()');
+        }
 
-        CMS_ContentInfo_print_ctx($bio_out, $cms, 0, undef);
+        $cms = PEM_read_bio_CMS($bio, undef, undef, undef);
+        BIO_free($bio); $bio = undef;
+
+        $bio = BIO_new(BIO_s_mem);
+
+        CMS_ContentInfo_print_ctx($bio, $cms, 0, undef);
 
         my $buf;
-        my $len = BIO_ctrl($bio_out, BIO_CTRL_INFO(), 0, \$buf);
+        my $len = BIO_ctrl($bio, BIO_CTRL_INFO(), 0, \$buf);
 
         $string = buffer_to_scalar($buf, $len);
     } catch {
-        die("Dump failed: $_");
+        _croak("Dump failed: $_");
     } finally {
-        BIO_free($bio_in) if $bio_in;
-        BIO_free($bio_out) if $bio_out;
+        BIO_free($bio) if $bio;
         CMS_ContentInfo_free($cms) if $cms;
     };
 
@@ -310,6 +361,11 @@ sub _last_error {
     return $string;
 }
 
+sub _croak {
+    local $Carp::CarpLevel = 1;
+    croak(@_);
+}
+
 
 1;
 
@@ -317,22 +373,22 @@ __END__
 
 =head1 NAME
 
-Crypt::OpenSSL::CMS - Perl bindings to OpenSSL CMS API (former PKCS7)
+Crypt::OpenSSL::CMS - L<FFI|FFI::Platypus> Perl bindings to OpenSSL L<Cryptographic Message Syntax (CMS)|https://tools.ietf.org/html/rfc5652> API (former PKCS7)
 
 =head1 SYNOPSIS
 
     use Crypt::OpenSSL::CMS;
     my $cms = Crypt::OpenSSL::CMS->new(
+        ca_file  => "certificate.cer",
         cert     => "certificate.cer",
         key      => "private.key",
         key_pass => "password",
     );
 
-    $signed_data = $cms->verify($pem);
-    $pem = $cms->sign($data_to_sign);
-    ...
+    $message = $cms->verify(file => 'signed.pem');
+    $pem = $cms->sign(string => $message);
 
-=head1 METHODS
+=head1 CONSTRUCTOR
 
 =head2 new( %attributes )
 
@@ -340,13 +396,21 @@ Create a new instance.
 
 =over
 
+=item ca_file
+
+Path to trusted certificates file
+
+=item ca_path
+
+Path to trusted certificates directory
+
 =item cert
 
-Path to certificate file
+Path to personal certificate file
 
 =item key
 
-Path to private key file
+Path to personal private key file
 
 =item key_pass
 
@@ -354,21 +418,142 @@ Password for the private key
 
 =back
 
-=head2 virify( $pem, $flags )
+=head1 METHODS
 
-Verify CMS content in pem format and return signed data on success
+=head2 verify
 
-=head2 sign( $data, $flags )
+    $cms->verify( file => 'signed.pem' );
+    # OR
+    $cms->verify( string => $signed_data );
 
-Sign data and return CMS content in pem format
+    # with additional parameters
+    $cms->verify( file => 'signed.pem', flags => Crypt::OpenSSL::CMS::CMS_NO_SIGNER_CERT_VERIFY );
+    $cms->verify( file => 'signed.pem', cert => 'cert.cer' );
+    $cms->verify( file => 'signed.pem', ca_file => 'cert.cer' );
 
-=head2 encode( $data, $flags )
+Verify CMS content in pem format and return signed data on success.
 
-Encode data and return CMS content in pem format
+=head2 sign
 
-=head2 decode( $pem, $flags )
+    $cms->sign( string => $data );
+    $cms->sign( file => 'message.txt', flags => Crypt::OpenSSL::CMS::CMS_NOCERTS );
 
-Decode CMS content in pem format and return decoded data
+Sign data and return CMS content in pem format.
+
+=head2 encrypt
+
+    $cms->encrypt( string => $data, recipient => 'john.cer', flags => $flags );
+
+Encode data and return CMS content in pem format.
+
+=head2 decrypt
+
+    $cms->decrypt( string => $data, flags => $flags )
+
+Decode CMS content in pem format and return decoded data.
+
+=head2 dump
+
+    $cms->dump( string => $data );
+
+Return text dump. For example:
+
+    CMS_ContentInfo:
+      contentType: pkcs7-envelopedData (1.2.840.113549.1.7.3)
+      d.envelopedData:
+        version: <ABSENT>
+        originatorInfo: <ABSENT>
+        recipientInfos:
+          d.ktri:
+            version: <ABSENT>
+            d.issuerAndSerialNumber:
+              issuer: CN=PKCS#7 example
+              serialNumber: 14646190812765378694
+            keyEncryptionAlgorithm:
+              algorithm: rsaEncryption (1.2.840.113549.1.1.1)
+              parameter: NULL
+            encryptedKey:
+              0000 - ae a3 c8 d5 8f a3 27 19-aa 9c 09 ec 85 c9 1c   ......'........
+              000f - 2b a4 1b dd 2c b9 fe 1e-b3 bd 18 8b 67 2a 7b   +...,.......g*{
+              001e - a6 20 36 5c 6b 3a 93 81-65 43 e3 4d f1 9f 97   . 6\k:..eC.M...
+              002d - b1 ff d3 b1 27 66 b4 b1-85 2e e6 3f b3 f7 78   ....'f.....?..x
+              003c - 69 3d 5e 58 fa c9 05 21-f6 72 47 b9 36 af a0   i=^X...!.rG.6..
+              004b - ee eb 6d d7 4f 02 99 24-a6 9c 68 5c d2 da cd   ..m.O..$..h\...
+              005a - 40 53 e9 a0 01 60 c8 d5-54 76 f1 bd 21 f3 e5   @S...`..Tv..!..
+              0069 - b7 69 9e ee a3 de 8f ff-33 ed 79 01 a9 a1 70   .i......3.y...p
+              0078 - 2a c7 e8 9b 94 29 83 2a-98 26 f3 d3 8b 65 21   *....).*.&...e!
+              0087 - b1 fb 34 a6 68 fb 97 be-f2 1f f0 fd 2f 35 4d   ..4.h......./5M
+              0096 - 6b 0d 32 19 05 8d 3f 2c-2e 44 ff 95 ae 05 23   k.2...?,.D....#
+              00a5 - 87 57 ff c0 93 ac f6 36-0a e5 1d 60 08 24 ad   .W.....6...`.$.
+              00b4 - 23 af 0f b8 31 f9 e5 38-61 d2 e6 65 9c 75 e6   #...1..8a..e.u.
+              00c3 - 46 ac a3 04 c7 d1 e4 22-48 54 94 e5 24 71 49   F......"HT..$qI
+              00d2 - 4f 7c db fc a9 bd ea 07-64 5f 49 4c 7d 3b 96   O|......d_IL};.
+              00e1 - 56 61 0b 8d 2e e1 de c1-42 59 de 01 1f cd 8c   Va......BY.....
+              00f0 - 42 2f 01 f6 32 ef e6 14-09 9b ee 80 22 be 81   B/..2......."..
+              00ff - 88                                             .
+        encryptedContentInfo:
+          contentType: pkcs7-data (1.2.840.113549.1.7.1)
+          contentEncryptionAlgorithm:
+            algorithm: des-ede3-cbc (1.2.840.113549.3.7)
+            parameter: OCTET STRING:
+              0000 - 9c c9 65 53 99 bd af 9f-                       ..eS....
+          encryptedContent:
+            0000 - ba 18 3b 1c 90 a1 10 37-89 69 72 db d6 ad 56   ..;....7.ir...V
+            000f - 52 eb 39 58 d6 12 3f fd-9a                     R.9X..?..
+        unprotectedAttrs:
+          <EMPTY>
+
+=head1 FLAGS
+
+B<Flags constants are not exported, so you should prefix them with Crypt::OpenSSL::CMS::>
+
+For additional info, please look at man page L<cms(1)|https://linux.die.net/man/1/cms>
+
+=over
+
+=item CMS_TEXT
+
+=item CMS_NOCERTS
+
+=item CMS_NO_CONTENT_VERIFY
+
+=item CMS_NO_ATTR_VERIFY
+
+=item CMS_NOSIGS
+
+=item CMS_NOINTERN
+
+=item CMS_NO_SIGNER_CERT_VERIFY
+
+=item CMS_NOVERIFY
+
+=item CMS_DETACHED
+
+=item CMS_BINARY
+
+=item CMS_NOATTR
+
+=item CMS_NOSMIMECAP
+
+=item CMS_NOOLDMIMETYPE
+
+=item CMS_CRLFEOL
+
+=item CMS_STREAM
+
+=item CMS_NOCRL
+
+=item CMS_PARTIAL
+
+=item CMS_REUSE_DIGEST
+
+=item CMS_USE_KEYID
+
+=item CMS_DEBUG_DECRYPT
+
+=item CMS_KEY_PARAM
+
+=back
 
 =head1 AUTHOR
 
