@@ -67,13 +67,13 @@ Sign data and return CMS content in pem format.
 
     $cms->encrypt( string => $data, recipient => 'john.cer', flags => $flags );
 
-Encode data and return CMS content in pem format.
+Encrypt data and return CMS content in pem format.
 
 ## decrypt
 
     $cms->decrypt( string => $data, flags => $flags )
 
-Decode CMS content in pem format and return decoded data.
+Decrypt CMS content in pem format and return decrypted data.
 
 ## dump
 

@@ -66,7 +66,7 @@ BEGIN {
     $ffi->attach( X509_STORE_add_cert          => [ 'opaque', 'X509' ] => 'opaque', $wrapper);
     $ffi->attach( X509_STORE_load_locations    => [ 'opaque', 'string', 'string'] => 'int', $wrapper);
     $ffi->attach( X509_STORE_set_default_paths => [ 'opaque' ] => 'int', $wrapper);
-    $ffi->attach( X509_STORE_free              => [ 'opaque' ] => 'void', $wrapper);
+    $ffi->attach( X509_STORE_free              => [ 'opaque' ] => 'void' );
 
     $ffi->attach( sk_new_null => [] => 'X509_STACK', $wrapper );
     $ffi->attach( sk_push     => [ 'X509_STACK', 'X509' ]   => 'int', $wrapper );
@@ -172,7 +172,7 @@ sub verify {
         X509_free($cert) if $cert;
         sk_pop_free($certs, $ffi->find_symbol('X509_free')) if $certs;
         # FIXME
-        #X509_STORE_free($store) if $store;
+        X509_STORE_free($store) if $store;
         CMS_ContentInfo_free($cms) if $cms;
     };
 
@@ -444,13 +444,13 @@ Sign data and return CMS content in pem format.
 
     $cms->encrypt( string => $data, recipient => 'john.cer', flags => $flags );
 
-Encode data and return CMS content in pem format.
+Encrypt data and return CMS content in pem format.
 
 =head2 decrypt
 
     $cms->decrypt( string => $data, flags => $flags )
 
-Decode CMS content in pem format and return decoded data.
+Decrypt CMS content in pem format and return decrypted data.
 
 =head2 dump
 
