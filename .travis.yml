@@ -12,4 +12,7 @@ perl:
 
 before_install:
   - sudo apt-get -qq update
-  - sudo apt-get install -y libffi6 libffi-dev libssl1.0.0
+  - sudo apt-get install -y libffi6 libffi-dev software-properties-common
+  - sudo add-apt-repository ppa:0k53d-karl-f830m/openssl
+  - sudo apt-get update
+  - sudo apt-get install libssl1.0.0
