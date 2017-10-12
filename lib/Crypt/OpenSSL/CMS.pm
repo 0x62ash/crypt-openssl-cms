@@ -21,7 +21,7 @@ BEGIN {
         find_lib_or_die(
             lib     => 'crypto',
             symbol  => 'PEM_read_bio_CMS',
-            libpath => ["/usr/local/", "/usr/local/opt/openssl/lib"]
+            libpath => ["/usr/local/", "/lib/x86_64-linux-gnu/", "/usr/local/opt/openssl/lib"]
         )
     );
 
