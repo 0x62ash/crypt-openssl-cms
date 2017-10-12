@@ -19,7 +19,7 @@ BEGIN {
 
     $ffi->lib(
         find_lib_or_die(
-            lib     => 'crypto.1.0.0',
+            lib     => 'crypto',
             symbol  => 'PEM_read_bio_CMS',
             libpath => ["/lib/x86_64-linux-gnu/", "/usr/local/opt/openssl/lib"]
         )
