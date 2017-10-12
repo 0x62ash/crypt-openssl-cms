@@ -14,4 +14,6 @@ before_install:
   - sudo apt-get -qq update
 #  - sudo apt-get remove libssl0.9.8
   - sudo apt-get install -y libffi6 libffi-dev
-  - sudo cpanm https://github.com/plicease/FFI-CheckLib.git
+
+install:
+  - cpanm https://github.com/plicease/FFI-CheckLib.git
