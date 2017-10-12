@@ -11,6 +11,7 @@ perl:
   - "5.26"
 
 before_install:
+  - sudo ls -al /lib/x86_64-linux-gnu/*libssl*
   - sudo apt-get -qq update
   - sudo apt-get remove libssl0.9.8
   - sudo apt-get install -y libffi6 libffi-dev
