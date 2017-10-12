@@ -1,5 +1,7 @@
 # NAME
 
+[![Build Status](https://travis-ci.org/0x62ash/crypt-openssl-cms.svg?branch=master)](https://travis-ci.org/0x62ash/crypt-openssl-cms)
+
 Crypt::OpenSSL::CMS - [FFI](https://metacpan.org/pod/FFI::Platypus) Perl bindings to OpenSSL [Cryptographic Message Syntax (CMS)](https://tools.ietf.org/html/rfc5652) API (former PKCS7)
 
 # SYNOPSIS
