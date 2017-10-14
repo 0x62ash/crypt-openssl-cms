@@ -16,4 +16,4 @@ before_install:
   - sudo apt-get install -y libffi6 libffi-dev
 
 install:
-  - cpanm https://github.com/plicease/FFI-CheckLib.git
+  - cpanm FFI::CheckLib@0.17_01
