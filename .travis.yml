@@ -17,3 +17,4 @@ before_install:
 
 install:
   - cpanm FFI::CheckLib@0.17_01
+  - cpanm --quiet --installdeps --notest .
